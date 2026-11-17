@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SOSTITUZIONI DOCENTI - Plesso Vittorini
-Web app Streamlit con toggle Chiaro/Scuro e regole personalizzate.
+Web app Streamlit con pulsanti rapidi per i giorni, toggle Chiaro/Scuro e alternative ora per ora.
 """
 
 import hmac
@@ -27,19 +27,19 @@ PLESSO = {
 }
 
 GIORNI = {
-    "Lunedì": "Lun",
-    "Martedì": "Mar",
-    "Mercoledì": "Mer",
-    "Giovedì": "Gio",
-    "Venerdì": "Ven",
+    "LUN": ("Lunedì", "Lun"),
+    "MAR": ("Martedì", "Mar"),
+    "MER": ("Mercoledì", "Mer"),
+    "GIO": ("Giovedì", "Gio"),
+    "VEN": ("Venerdì", "Ven"),
 }
 ORE = list(range(1, 8))  # 1ª - 7ª ora
 
 TOKEN_DISP = {"DISP.", "DISP", "D"}
 TOKEN_RICEV = {"RICEV.", "RICEV"}
 
-# Cognomi dei docenti le cui ore buche nel plesso valgono per le supplenze
-# (match parziale case-insensitive sul nome nel CSV, es. "SCAVO M.", "INNOCENTI S")
+# Cognomi dei docenti le cui ore buche sono sempre utilizzabili per supplenze
+# (purché non adiacenti a classi fuori dal plesso)
 DOCENTI_BUCHE_ATTIVE = {"SCAVO", "INNOCENTI"}
 
 ORDINALI_MIN = {
@@ -51,11 +51,6 @@ ORDINALI_MIN = {
     6: "sesta",
     7: "settima",
 }
-
-# Inserisci qui i nomi ESATTI (come nel CSV) dei docenti uomini
-MASCHI = set()
-
-COLONNE_TABELLA = ["Ora", "Classe", "Assente", "Soluzione", "Note / Alternative"]
 
 
 # ----------------------------------------------------------------------------
@@ -71,8 +66,9 @@ def applica_stile(dark_mode: bool) -> None:
         text_muted = "#94a3b8"
         code_bg = "#1e293b"
         code_text = "#f8fafc"
-        buche_bg = "#1e293b"
-        buche_title = "#60a5fa"
+        alt_title = "#60a5fa"
+        sec_btn_bg = "#1e293b"
+        sec_btn_text = "#f1f5f9"
     else:
         bg_app = "#f4f6f9"
         bg_card = "#ffffff"
@@ -82,8 +78,9 @@ def applica_stile(dark_mode: bool) -> None:
         text_muted = "#64748b"
         code_bg = "#ffffff"
         code_text = "#0f172a"
-        buche_bg = "#ffffff"
-        buche_title = "#1e3a8a"
+        alt_title = "#1e3a8a"
+        sec_btn_bg = "#ffffff"
+        sec_btn_text = "#1e293b"
 
     st.markdown(
         f"""
@@ -106,7 +103,7 @@ def applica_stile(dark_mode: bool) -> None:
             color: {text_muted} !important;
         }}
 
-        /* Input, Selectbox e Multiselect */
+        /* Input e Multiselect */
         [data-baseweb="select"] > div,
         [data-baseweb="input"] > div,
         input {{
@@ -140,6 +137,30 @@ def applica_stile(dark_mode: bool) -> None:
             color: #dbeafe !important;
         }}
 
+        /* Pulsanti giorni (Primary = selezionato, Secondary = non selezionato) */
+        button[kind="primary"] {{
+            background-color: #1e3a8a !important;
+            color: #ffffff !important;
+            border: 2px solid #1e3a8a !important;
+            border-radius: 10px !important;
+            font-weight: 700 !important;
+            padding: 0.55rem 0.2rem !important;
+        }}
+        button[kind="primary"] p {{
+            color: #ffffff !important;
+        }}
+        button[kind="secondary"] {{
+            background-color: {sec_btn_bg} !important;
+            color: {sec_btn_text} !important;
+            border: 1.5px solid {border_col} !important;
+            border-radius: 10px !important;
+            font-weight: 600 !important;
+            padding: 0.55rem 0.2rem !important;
+        }}
+        button[kind="secondary"]:hover {{
+            border-color: #2563eb !important;
+        }}
+
         /* Card dei docenti assenti */
         [data-testid="stVerticalBlockBorderWrapper"] {{
             background-color: {bg_card} !important;
@@ -166,41 +187,29 @@ def applica_stile(dark_mode: bool) -> None:
             padding: 1rem !important;
         }}
 
-        /* Card informativa ore buche nel plesso */
-        .buche-card {{
-            background-color: {buche_bg};
+        /* Card alternative ora per ora */
+        .ora-card {{
+            background-color: {bg_card};
             border: 1px solid {border_col};
-            border-left: 4px solid #3b82f6;
+            border-left: 4px solid #2563eb;
             border-radius: 12px;
-            padding: 1rem 1.2rem;
-            margin-top: 1rem;
+            padding: 0.9rem 1.1rem;
+            margin-bottom: 0.75rem;
             box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
         }}
-        .buche-card h4 {{
-            margin: 0 0 0.4rem 0;
+        .ora-card h4 {{
+            margin: 0 0 0.45rem 0;
             font-size: 1rem;
-            color: {buche_title} !important;
+            color: {alt_title} !important;
         }}
-        .buche-card p {{
-            margin: 0 0 0.6rem 0;
-            font-size: 0.85rem;
-            color: {text_muted} !important;
-        }}
-
-        /* Bottoni */
-        .stButton > button {{
-            background-color: #1e3a8a !important;
-            color: #ffffff !important;
-            border-radius: 10px;
-            border: none;
-            padding: 0.6rem 1.2rem;
-            font-weight: 600;
-        }}
-        .stButton > button:hover {{
-            background-color: #1d4ed8 !important;
+        .ora-card ul {{
+            margin: 0;
+            padding-left: 1.2rem;
+            font-size: 0.92rem;
+            line-height: 1.55;
         }}
 
-        /* Badge esito */
+        /* Badge esito e avviso giorno mancante */
         .badge-ok {{
             background-color: #dcfce7;
             color: #166534 !important;
@@ -213,11 +222,12 @@ def applica_stile(dark_mode: bool) -> None:
         .badge-warn {{
             background-color: #fee2e2;
             color: #991b1b !important;
-            padding: 0.8rem 1rem;
+            padding: 0.85rem 1rem;
             border-radius: 12px;
-            border-left: 4px solid #dc2626;
+            border: 1px solid #fca5a5;
+            border-left: 5px solid #dc2626;
             font-weight: 600;
-            margin: 0.8rem 0;
+            margin: 0.7rem 0 1rem 0;
         }}
         </style>
         """,
@@ -249,7 +259,7 @@ def controlla_accesso() -> None:
     )
     with st.form("login"):
         pwd = st.text_input("Inserisci la password di accesso", type="password")
-        invia = st.form_submit_button("Entra", use_container_width=True)
+        invia = st.form_submit_button("Entra", type="primary", use_container_width=True)
     if invia:
         if hmac.compare_digest(pwd.encode("utf-8"), password_attesa().encode("utf-8")):
             st.session_state["autenticato"] = True
@@ -260,7 +270,7 @@ def controlla_accesso() -> None:
 
 
 # ----------------------------------------------------------------------------
-# CARICAMENTO DATI (con auto-rilevamento separatore ',' o ';')
+# CARICAMENTO DATI
 # ----------------------------------------------------------------------------
 @st.cache_data
 def carica_dati() -> pd.DataFrame:
@@ -312,8 +322,8 @@ def costruisci_orario(df: pd.DataFrame) -> dict:
         if not nome:
             continue
         orario[nome] = {
-            g: [None] + [classifica(r.get(f"{g}_{h}", "")) for h in ORE]
-            for g in GIORNI.values()
+            abbr: [None] + [classifica(r.get(f"{abbr}_{h}", "")) for h in ORE]
+            for (_, abbr) in GIORNI.values()
         }
     return orario
 
@@ -326,7 +336,9 @@ def is_docente_buca_attiva(doc: str) -> bool:
 # ----------------------------------------------------------------------------
 # MOTORE DELLE SOSTITUZIONI
 # ----------------------------------------------------------------------------
-def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dict]:
+def calcola(
+    orario: dict, giorno: str, assenze: dict, ore_escluse: set
+) -> tuple[pd.DataFrame, dict]:
     g = giorno
 
     def cella(doc, h):
@@ -341,25 +353,10 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
         return k == "classe" and v in PLESSO
 
     def valida(doc, h):
-        """Disp./Ricev. valida solo se non adiacente a classi di un altro edificio."""
         return not esterna(doc, h - 1) and not esterna(doc, h + 1)
 
     def presente_prima(doc, h):
         return any(cella(doc, x)[0] != "vuoto" for x in range(1, h))
-
-    def buca_valida_speciale(doc, h) -> bool:
-        """
-        Per Scavo e Innocenti: se all'ora h hanno cella 'vuoto', possono supplire
-        se prima O dopo nell'arco della giornata hanno almeno una classe nel PLESSO
-        (e non sono adiacenti a classi esterne).
-        """
-        if not is_docente_buca_attiva(doc):
-            return False
-        if not valida(doc, h):
-            return False
-        ha_plesso_prima = any(interna(doc, x) for x in range(1, h))
-        ha_plesso_dopo = any(interna(doc, x) for x in range(h + 1, 8))
-        return ha_plesso_prima or ha_plesso_dopo
 
     # Mappa orario giornaliero delle classi del plesso
     classi_ore = {}
@@ -372,18 +369,20 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
     classi_docente = {
         doc: {
             v
-            for gg in GIORNI.values()
+            for (_, gg) in GIORNI.values()
             for (k, v) in orario[doc][gg][1:]
             if k == "classe"
         }
         for doc in orario
     }
 
-    # Individua ore scoperte e compresenze
+    # Individua ore scoperte e compresenze (ignorando le ore escluse)
     mancanti = {}
     compres = {}
     for doc, ore_ass in assenze.items():
         for h in ore_ass:
+            if h in ore_escluse:
+                continue
             k, cls = cella(doc, h)
             if k != "classe" or cls not in PLESSO:
                 continue
@@ -401,50 +400,40 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
     ris = {}
     da_C = []
 
-    def candidati(t, cls):
-        """
-        Priorità risorse:
-        0: Disp. valida nel plesso
-        1: Ora buca nel plesso per Scavo / Innocenti
-        2: Ricev. valido nel plesso
-        Sottopriorità: 0 = stessa classe, 1 = ora adiacente nel plesso, 2 = altro
-        """
+    def risorse_ora(t, cls_target=None):
         out = []
         for doc in orario:
             if doc in assenze or (doc, t) in busy:
                 continue
             k, _ = cella(doc, t)
 
-            tipo_risorsa = None
-            priorita_cat = 99
-
             if k == "disp" and valida(doc, t):
-                tipo_risorsa = "Disp."
-                priorita_cat = 0
-            elif k == "vuoto" and buca_valida_speciale(doc, t):
-                tipo_risorsa = "Ora buca nel plesso"
-                priorita_cat = 1
+                tipo_ris = "Disp."
+                cat = 0
+            elif k == "vuoto" and is_docente_buca_attiva(doc) and valida(doc, t):
+                tipo_ris = "Buca valida"
+                cat = 1
             elif k == "ricev" and valida(doc, t):
-                tipo_risorsa = "Ricev."
-                priorita_cat = 2
+                tipo_ris = "Ricev."
+                cat = 2
             else:
                 continue
 
-            stessa = cls in classi_docente[doc]
+            stessa = (cls_target in classi_docente[doc]) if cls_target else False
             adiac = interna(doc, t - 1) or interna(doc, t + 1)
             sub = 0 if stessa else (1 if adiac else 2)
 
             if stessa:
-                etichetta = f"{tipo_risorsa} (già docente in {cls})"
+                dettaglio = f"{tipo_ris} • già docente in {cls_target}"
             elif adiac:
-                etichetta = f"{tipo_risorsa} (ora adiacente nel plesso)"
+                dettaglio = f"{tipo_ris} • ora adiacente nel plesso"
             else:
-                etichetta = tipo_risorsa
+                dettaglio = tipo_ris
 
-            out.append(((priorita_cat, sub, doc), doc, etichetta))
+            out.append(((cat, sub, doc), doc, dettaglio))
 
         out.sort(key=lambda x: x[0])
-        return [(d, e) for _, d, e in out]
+        return [(d, det) for _, d, det in out]
 
     def cerca_anticipo(cls, t, src):
         for doc in classi_ore[cls].get(src, []):
@@ -462,10 +451,13 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
 
     # ---- REGOLE A e B (continuità e max 1 ora ingresso/uscita) ------------
     for cls in sorted(mancanti):
-        hrs = sorted(classi_ore[cls])
+        hrs = sorted(h for h in classi_ore[cls] if h not in ore_escluse)
         todo = set(mancanti[cls])
         ha_tagliato_ingresso = False
         ha_tagliato_uscita = False
+
+        if not hrs:
+            continue
 
         if all(h in todo for h in hrs):
             da_C.extend((cls, h) for h in sorted(todo))
@@ -474,14 +466,7 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
         # 1. Entrata posticipata: max 1 ora (solo 1ª ora della classe, entra alla 2ª)
         prima_ora_classe = hrs[0]
         if prima_ora_classe in todo and prima_ora_classe == 1 and len(hrs) > 1:
-            entra = hrs[1]
-            ris[(cls, prima_ora_classe)] = (
-                "ENTRATA_POST",
-                f"Entrata posticipata (entra alla {entra}ª ora)",
-                "Max 1 ora di posticipo ingresso consentita.",
-                "",
-                None,
-            )
+            ris[(cls, prima_ora_classe)] = ("ENTRATA_POST", "", None)
             todo.remove(prima_ora_classe)
             hrs.remove(prima_ora_classe)
             ha_tagliato_ingresso = True
@@ -489,13 +474,7 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
         # 2. Uscita anticipata: max 1 ora (solo ultima ora della classe)
         ultima_ora_classe = hrs[-1]
         if ultima_ora_classe in todo and len(hrs) > 1:
-            ris[(cls, ultima_ora_classe)] = (
-                "USCITA_ANT",
-                "Uscita anticipata (esce un'ora prima)",
-                "Max 1 ora di uscita anticipata consentita.",
-                "",
-                None,
-            )
+            ris[(cls, ultima_ora_classe)] = ("USCITA_ANT", "", None)
             todo.remove(ultima_ora_classe)
             hrs.remove(ultima_ora_classe)
             ha_tagliato_uscita = True
@@ -518,22 +497,10 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
             if trovato:
                 doc, src, tipo = trovato
                 if tipo == "ultima":
-                    ris[(cls, t)] = (
-                        "ANTICIPO",
-                        f"Prof. {doc} anticipa dalla {src}ª ora (classe esce un'ora prima)",
-                        f"Spostamento lezione dalla {src}ª alla {t}ª ora per continuità.",
-                        doc,
-                        src,
-                    )
+                    ris[(cls, t)] = ("ANTICIPO", doc, src)
                     ha_tagliato_uscita = True
                 else:
-                    ris[(cls, t)] = (
-                        "POSTICIPO",
-                        f"Prof. {doc} sposta dalla {src}ª ora (classe entra alla 2ª ora)",
-                        f"Spostamento lezione dalla {src}ª alla {t}ª ora per continuità.",
-                        doc,
-                        src,
-                    )
+                    ris[(cls, t)] = ("POSTICIPO", doc, src)
                     ha_tagliato_ingresso = True
                 busy.add((doc, t))
                 hrs.remove(src)
@@ -543,42 +510,26 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
 
     # ---- REGOLA C - Sostituzione con risorse valide nel plesso -------------
     for cls, t in sorted(da_C, key=lambda x: (x[1], x[0])):
-        cands = candidati(t, cls)
+        cands = risorse_ora(t, cls)
         if cands:
-            doc, etichetta = cands[0]
+            doc, _ = cands[0]
             busy.add((doc, t))
-            ris[(cls, t)] = (
-                "SOSTITUTO",
-                f"Prof. {doc}",
-                etichetta,
-                doc,
-                None,
-            )
+            ris[(cls, t)] = ("SOSTITUTO", doc, None)
         else:
-            ris[(cls, t)] = (
-                "SCOPERTO",
-                "SCOPERTO - Nessun docente disponibile",
-                "Nessuna risorsa valida disponibile nel plesso.",
-                "",
-                None,
-            )
+            ris[(cls, t)] = ("SCOPERTO", "", None)
 
     # ---- Compresenze --------------------------------------------------------
     for (cls, h), altri in compres.items():
-        ris[(cls, h)] = (
-            "COMPRESENZA",
-            f"Compresenza con Prof. {', '.join(altri)}",
-            "Classe già coperta dal docente in compresenza.",
-            "",
-            None,
-        )
+        ris[(cls, h)] = ("COMPRESENZA", ", ".join(altri), None)
 
-    # ---- Docenti con ORA BUCA ('vuoto') tra due classi del PLESSO -----------
-    # (escludendo Scavo e Innocenti che sono già usati come risorse attive)
+    # ---- Alternative disponibili ORA PER ORA --------------------------------
     ore_coinvolte = sorted({h for (_, h) in ris})
-    buche_plesso = {}
+    alternative_per_ora = {}
+
     for h in ore_coinvolte:
-        trovati_ora = []
+        valide_rimaste = risorse_ora(h)
+
+        buche_interne = []
         for doc in sorted(orario):
             if doc in assenze or (doc, h) in busy or is_docente_buca_attiva(doc):
                 continue
@@ -591,11 +542,14 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
                 k_p, v_p = prima[0]
                 k_d, v_d = dopo[0]
                 if k_p == "classe" and v_p in PLESSO and k_d == "classe" and v_d in PLESSO:
-                    trovati_ora.append((doc, v_p, v_d))
-        if trovati_ora:
-            buche_plesso[h] = trovati_ora
+                    buche_interne.append(f"{doc} (buca tra {v_p} e {v_d})")
 
-    # ---- Costruzione DataFrame ----------------------------------------------
+        alternative_per_ora[h] = {
+            "valide": [f"{d} ({det})" for d, det in valide_rimaste],
+            "buche_plesso": buche_interne,
+        }
+
+    # ---- Costruzione DataFrame di servizio ----------------------------------
     assenti_per_riga = {}
     for cls, d in mancanti.items():
         for h, nomi in d.items():
@@ -607,57 +561,39 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
 
     righe = []
     for (cls, h) in sorted(ris, key=lambda x: (x[1], x[0])):
-        tipo, sol_tab, note_tab, doc_coinv, ora_orig = ris[(cls, h)]
-        alt = [f"{d} ({e})" for d, e in candidati(h, cls)][:5]
+        tipo, doc_coinv, ora_orig = ris[(cls, h)]
         righe.append(
             {
-                "Ora": f"{h}ª",
+                "Ora": h,
                 "Classe": cls,
-                "Assente": ", ".join(assenti_per_riga[(cls, h)]),
-                "Soluzione": sol_tab,
-                "Note / Alternative": (
-                    f"{note_tab} | Alt: {'; '.join(alt)}" if alt else note_tab
-                ),
-                "_Ora": h,
-                "_Assenti": assenti_per_riga[(cls, h)],
-                "_Tipo": tipo,
-                "_DocCoinv": doc_coinv,
-                "_OraOrig": ora_orig,
+                "Assenti": assenti_per_riga[(cls, h)],
+                "Tipo": tipo,
+                "DocCoinv": doc_coinv,
+                "OraOrig": ora_orig,
             }
         )
-    df_ris = pd.DataFrame(
-        righe,
-        columns=COLONNE_TABELLA
-        + ["_Ora", "_Assenti", "_Tipo", "_DocCoinv", "_OraOrig"],
-    )
-    return df_ris, buche_plesso
+
+    return pd.DataFrame(righe), alternative_per_ora
 
 
 # ----------------------------------------------------------------------------
-# FORMATTAZIONE OUTPUT TASCABILE
+# FORMATTAZIONE BOLLETTINO TASCABILE
 # ----------------------------------------------------------------------------
-def titolo_prof(doc: str) -> str:
-    return f"prof {doc}" if doc in MASCHI else f"prof.ssa {doc}"
-
-
 def genera_bollettino(nome_giorno: str, df: pd.DataFrame, ordine_assenti: list) -> str:
     blocchi = [f"SOSTITUZIONI {nome_giorno.upper()}"]
 
     for doc in ordine_assenti:
-        righe_doc = df[df["_Assenti"].apply(lambda a: doc in a)]
+        righe_doc = df[df["Assenti"].apply(lambda a: doc in a)]
         if righe_doc.empty:
-            blocchi.append(
-                f"\nManca {titolo_prof(doc)}\nNessuna ora da coprire nel plesso."
-            )
             continue
 
-        righe_testo = [f"\nManca {titolo_prof(doc)}"]
-        for _, r in righe_doc.sort_values(["_Ora", "Classe"]).iterrows():
-            ora_txt = ORDINALI_MIN[r["_Ora"]]
+        righe_testo = [f"\nManca {doc}"]
+        for _, r in righe_doc.sort_values(["Ora", "Classe"]).iterrows():
+            ora_txt = ORDINALI_MIN[r["Ora"]]
             cls = r["Classe"]
-            tipo = r["_Tipo"]
-            sost = r["_DocCoinv"]
-            ora_orig = r["_OraOrig"]
+            tipo = r["Tipo"]
+            sost = r["DocCoinv"]
+            ora_orig = r["OraOrig"]
 
             if tipo == "ENTRATA_POST":
                 righe_testo.append(f"A {ora_txt} ora entrata posticipata in {cls}")
@@ -665,43 +601,22 @@ def genera_bollettino(nome_giorno: str, df: pd.DataFrame, ordine_assenti: list) 
                 righe_testo.append(f"A {ora_txt} ora uscita anticipata in {cls}")
             elif tipo == "ANTICIPO":
                 righe_testo.append(
-                    f"A {ora_txt} ora anticipa {titolo_prof(sost)} (dalla {ora_orig}ª) in {cls} -> uscita anticipata"
+                    f"A {ora_txt} ora anticipa {sost} (dalla {ora_orig}ª) in {cls} -> uscita anticipata"
                 )
             elif tipo == "POSTICIPO":
                 righe_testo.append(
-                    f"A {ora_txt} ora posticipa {titolo_prof(sost)} (dalla {ora_orig}ª) in {cls} -> entrata posticipata"
+                    f"A {ora_txt} ora posticipa {sost} (dalla {ora_orig}ª) in {cls} -> entrata posticipata"
                 )
             elif tipo == "SOSTITUTO":
-                righe_testo.append(
-                    f"A {ora_txt} ora sostituisce {titolo_prof(sost)} in {cls}"
-                )
+                righe_testo.append(f"A {ora_txt} ora sostituisce {sost} in {cls}")
             elif tipo == "COMPRESENZA":
-                righe_testo.append(
-                    f"A {ora_txt} ora in {cls} resta il docente in compresenza"
-                )
+                righe_testo.append(f"A {ora_txt} ora in {cls} resta {sost} (compresenza)")
             else:
-                righe_testo.append(
-                    f"A {ora_txt} ora SCOPERTA in {cls} (nessun sostituto disponibile)"
-                )
+                righe_testo.append(f"A {ora_txt} ora SCOPERTA in {cls}")
 
         blocchi.append("\n".join(righe_testo))
 
     return "\n".join(blocchi)
-
-
-def colora_riga(riga):
-    s = riga["Soluzione"]
-    if s.startswith("SCOPERTO"):
-        stile = "background-color:#ffd6d6;color:#7a0000"
-    elif s.startswith(("Entrata", "Uscita")):
-        stile = "background-color:#fff4cc;color:#5c4500"
-    elif "anticipa" in s or "sposta" in s:
-        stile = "background-color:#d9ecff;color:#0b3a66"
-    elif s.startswith("Compresenza"):
-        stile = "background-color:#eeeeee;color:#333333"
-    else:
-        stile = "background-color:#dcf5dc;color:#0b4d0b"
-    return [stile] * len(riga)
 
 
 # ----------------------------------------------------------------------------
@@ -714,12 +629,13 @@ def main():
 
     if "dark_mode" not in st.session_state:
         st.session_state["dark_mode"] = False
+    if "giorno_scelto" not in st.session_state:
+        st.session_state["giorno_scelto"] = None
 
     applica_stile(st.session_state["dark_mode"])
     controlla_accesso()
 
-    # Barra superiore con toggle Chiaro / Scuro
-    col_titolo, col_tema = st.columns([3, 1])
+    _, col_tema = st.columns([3, 1])
     with col_tema:
         st.toggle("🌙 Scuro", key="dark_mode")
 
@@ -741,7 +657,37 @@ def main():
 
     orario = costruisci_orario(df_orario)
 
-    nome_giorno = st.selectbox("Giorno della settimana", list(GIORNI.keys()))
+    # Selezione giorno tramite 5 pulsanti
+    st.markdown("**Seleziona il giorno**")
+    cols_giorni = st.columns(5)
+    for idx, codice_g in enumerate(GIORNI.keys()):
+        is_selected = st.session_state["giorno_scelto"] == codice_g
+        with cols_giorni[idx]:
+            if st.button(
+                codice_g,
+                key=f"btn_{codice_g}",
+                type="primary" if is_selected else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["giorno_scelto"] = codice_g
+                st.rerun()
+
+    # Avviso rosso finché non viene cliccato un giorno
+    if st.session_state["giorno_scelto"] is None:
+        st.markdown(
+            '<div class="badge-warn">⚠️ Seleziona il giorno della settimana per calcolare le sostituzioni.</div>',
+            unsafe_allow_html=True,
+        )
+
+    ore_escluse = set(
+        st.multiselect(
+            "Ore senza sostituzione (es. Assemblea di Istituto)",
+            ORE,
+            format_func=lambda x: f"{x}ª ora",
+            placeholder="Nessuna ora esclusa",
+        )
+    )
+
     assenti = st.multiselect(
         "Docenti assenti",
         sorted(orario),
@@ -765,15 +711,18 @@ def main():
                 ore = st.multiselect(
                     "Ore di assenza",
                     ORE,
+                    format_func=lambda x: f"{x}ª ora",
                     key=f"ore_{doc}",
                     placeholder="Seleziona le ore",
                 )
                 assenze[doc] = set(ore)
 
-    if not assenti:
+    # Se manca il giorno o non ci sono assenti, si ferma qui
+    if st.session_state["giorno_scelto"] is None or not assenti:
         return
 
-    df, buche_plesso = calcola(orario, GIORNI[nome_giorno], assenze)
+    nome_giorno, abbr_giorno = GIORNI[st.session_state["giorno_scelto"]]
+    df, alternative_per_ora = calcola(orario, abbr_giorno, assenze, ore_escluse)
     st.divider()
 
     if df.empty:
@@ -783,40 +732,41 @@ def main():
         )
         return
 
-    scoperte = int((df["_Tipo"] == "SCOPERTO").sum())
+    scoperte = int((df["Tipo"] == "SCOPERTO").sum())
     if scoperte > 0:
         st.markdown(
             f'<div class="badge-warn">⚠️ Attenzione: {scoperte} ore risultano scoperte.</div>',
             unsafe_allow_html=True,
         )
 
-    st.subheader("Prospetto da copiare")
+    # 1. Prospetto pronto per WhatsApp
+    st.subheader(f"Prospetto {nome_giorno}")
     st.code(genera_bollettino(nome_giorno, df, assenti), language=None)
 
-    # Box informativo sui docenti con ora buca nel plesso
-    if buche_plesso:
-        righe_buche = []
-        for h, lista in buche_plesso.items():
-            nomi = ", ".join(
-                f"<b>{doc}</b> (tra {c1} e {c2})" for doc, c1, c2 in lista
+    # 2. Alternative disponibili ora per ora
+    st.subheader("Alternative disponibili ora per ora")
+    st.caption("Risorse ancora libere in ciascuna ora interessata (utili per eventuali cambi manuali).")
+
+    for h, info in alternative_per_ora.items():
+        voci = []
+        if info["valide"]:
+            voci.append(f"<li><b>Risorse valide:</b> {', '.join(info['valide'])}</li>")
+        else:
+            voci.append("<li><b>Risorse valide:</b> Nessuna rimasta</li>")
+
+        if info["buche_plesso"]:
+            voci.append(
+                f"<li><b>Ore buche nel plesso (non a disp.):</b> {', '.join(info['buche_plesso'])}</li>"
             )
-            righe_buche.append(f"• <b>{h}ª ora:</b> {nomi}")
+
         st.markdown(
             f"""
-            <div class="buche-card">
-                <h4>💡 Docenti con ora buca nel plesso (non a disposizione)</h4>
-                <p>Sono già nell'edificio tra due classi del plesso; utili solo per eventuali accordi informali o recuperi.</p>
-                <div style="font-size:0.92rem; line-height:1.6;">{"<br>".join(righe_buche)}</div>
+            <div class="ora-card">
+                <h4>🕐 {h}ª ora ({ORDINALI_MIN[h]} ora)</h4>
+                <ul>{"".join(voci)}</ul>
             </div>
             """,
             unsafe_allow_html=True,
-        )
-
-    with st.expander("Dettaglio tecnico e alternative disponibili"):
-        st.dataframe(
-            df[COLONNE_TABELLA].style.apply(colora_riga, axis=1),
-            use_container_width=True,
-            hide_index=True,
         )
 
 
