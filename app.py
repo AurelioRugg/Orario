@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 SOSTITUZIONI DOCENTI - Plesso Vittorini
-Web app Streamlit con interfaccia curata mobile-first.
+Web app Streamlit con toggle Chiaro/Scuro e regole personalizzate.
 """
 
 import hmac
@@ -38,6 +38,10 @@ ORE = list(range(1, 8))  # 1ª - 7ª ora
 TOKEN_DISP = {"DISP.", "DISP", "D"}
 TOKEN_RICEV = {"RICEV.", "RICEV"}
 
+# Cognomi dei docenti le cui ore buche nel plesso valgono per le supplenze
+# (match parziale case-insensitive sul nome nel CSV, es. "SCAVO M.", "INNOCENTI S")
+DOCENTI_BUCHE_ATTIVE = {"SCAVO", "INNOCENTI"}
+
 ORDINALI_MIN = {
     1: "prima",
     2: "seconda",
@@ -55,124 +59,166 @@ COLONNE_TABELLA = ["Ora", "Classe", "Assente", "Soluzione", "Note / Alternative"
 
 
 # ----------------------------------------------------------------------------
-# ESTETICA E STILE CUSTOM (CSS)
+# ESTETICA E TEMA CHIARO / SCURO
 # ----------------------------------------------------------------------------
-def applica_stile() -> None:
+def applica_stile(dark_mode: bool) -> None:
+    if dark_mode:
+        bg_app = "#0f172a"
+        bg_card = "#1e293b"
+        bg_input = "#1e293b"
+        border_col = "#334155"
+        text_main = "#f1f5f9"
+        text_muted = "#94a3b8"
+        code_bg = "#1e293b"
+        code_text = "#f8fafc"
+        buche_bg = "#1e293b"
+        buche_title = "#60a5fa"
+    else:
+        bg_app = "#f4f6f9"
+        bg_card = "#ffffff"
+        bg_input = "#ffffff"
+        border_col = "#cbd5e1"
+        text_main = "#1e293b"
+        text_muted = "#64748b"
+        code_bg = "#ffffff"
+        code_text = "#0f172a"
+        buche_bg = "#ffffff"
+        buche_title = "#1e3a8a"
+
     st.markdown(
-        """
+        f"""
         <style>
-        .stApp {
-            background-color: #f4f6f9;
-            color: #1e293b;
-        }
-        .block-container {
-            padding-top: 1.8rem;
+        .stApp {{
+            background-color: {bg_app} !important;
+            color: {text_main} !important;
+        }}
+        .block-container {{
+            padding-top: 1.6rem;
             padding-bottom: 3rem;
             max-width: 720px;
-        }
+        }}
+
+        /* Testi ed etichette */
+        h1, h2, h3, h4, p, span, label, [data-testid="stWidgetLabel"] p {{
+            color: {text_main} !important;
+        }}
+        .stCaption, small {{
+            color: {text_muted} !important;
+        }}
+
+        /* Input, Selectbox e Multiselect */
+        [data-baseweb="select"] > div,
+        [data-baseweb="input"] > div,
+        input {{
+            background-color: {bg_input} !important;
+            color: {text_main} !important;
+            border-color: {border_col} !important;
+        }}
+        [data-baseweb="select"] span,
+        [data-baseweb="select"] div {{
+            color: {text_main} !important;
+        }}
 
         /* Header istituzionale */
-        .header-card {
+        .header-card {{
             background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
-            color: white;
             padding: 1.35rem 1.6rem;
             border-radius: 16px;
-            margin-bottom: 1.4rem;
-            box-shadow: 0 4px 14px rgba(30, 58, 138, 0.18);
-        }
-        .header-card h1 {
+            margin-bottom: 1.2rem;
+            box-shadow: 0 4px 14px rgba(30, 58, 138, 0.22);
+        }}
+        .header-card h1 {{
             margin: 0;
             font-size: 1.5rem;
             font-weight: 700;
             letter-spacing: -0.02em;
-            color: white;
-        }
-        .header-card p {
+            color: #ffffff !important;
+        }}
+        .header-card p {{
             margin: 0.25rem 0 0 0;
             font-size: 0.9rem;
-            color: #dbeafe;
-        }
+            color: #dbeafe !important;
+        }}
 
         /* Card dei docenti assenti */
-        [data-testid="stVerticalBlockBorderWrapper"] {
-            background-color: #ffffff;
-            border: 1px solid #e2e8f0 !important;
+        [data-testid="stVerticalBlockBorderWrapper"] {{
+            background-color: {bg_card} !important;
+            border: 1px solid {border_col} !important;
             border-radius: 12px !important;
             padding: 0.4rem 0.6rem;
-            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
             margin-bottom: 0.6rem;
-        }
+        }}
 
         /* Riquadro Bollettino WhatsApp */
-        [data-testid="stCode"] {
-            background-color: #ffffff !important;
-            border: 1.5px solid #cbd5e1 !important;
+        [data-testid="stCode"] {{
+            background-color: {code_bg} !important;
+            border: 1.5px solid {border_col} !important;
             border-radius: 12px !important;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-        }
-        [data-testid="stCode"] pre {
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+        }}
+        [data-testid="stCode"] pre {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
             font-size: 0.98rem !important;
             line-height: 1.55 !important;
-            color: #0f172a !important;
+            color: {code_text} !important;
+            background-color: {code_bg} !important;
             padding: 1rem !important;
-        }
+        }}
 
         /* Card informativa ore buche nel plesso */
-        .buche-card {
-            background-color: #ffffff;
-            border: 1px solid #cbd5e1;
+        .buche-card {{
+            background-color: {buche_bg};
+            border: 1px solid {border_col};
             border-left: 4px solid #3b82f6;
             border-radius: 12px;
             padding: 1rem 1.2rem;
             margin-top: 1rem;
-            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
-        }
-        .buche-card h4 {
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+        }}
+        .buche-card h4 {{
             margin: 0 0 0.4rem 0;
             font-size: 1rem;
-            color: #1e3a8a;
-        }
-        .buche-card p {
+            color: {buche_title} !important;
+        }}
+        .buche-card p {{
             margin: 0 0 0.6rem 0;
             font-size: 0.85rem;
-            color: #64748b;
-        }
+            color: {text_muted} !important;
+        }}
 
-        /* Bottoni comodi da smartphone */
-        .stButton > button {
-            background-color: #1e3a8a;
-            color: white;
+        /* Bottoni */
+        .stButton > button {{
+            background-color: #1e3a8a !important;
+            color: #ffffff !important;
             border-radius: 10px;
             border: none;
             padding: 0.6rem 1.2rem;
             font-weight: 600;
-            transition: all 0.2s ease;
-        }
-        .stButton > button:hover {
-            background-color: #1d4ed8;
-            color: white;
-        }
+        }}
+        .stButton > button:hover {{
+            background-color: #1d4ed8 !important;
+        }}
 
         /* Badge esito */
-        .badge-ok {
+        .badge-ok {{
             background-color: #dcfce7;
-            color: #166534;
+            color: #166534 !important;
             padding: 0.8rem 1rem;
             border-radius: 12px;
             border-left: 4px solid #16a34a;
             font-weight: 500;
             margin: 0.8rem 0;
-        }
-        .badge-warn {
+        }}
+        .badge-warn {{
             background-color: #fee2e2;
-            color: #991b1b;
+            color: #991b1b !important;
             padding: 0.8rem 1rem;
             border-radius: 12px;
             border-left: 4px solid #dc2626;
             font-weight: 600;
             margin: 0.8rem 0;
-        }
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -214,18 +260,17 @@ def controlla_accesso() -> None:
 
 
 # ----------------------------------------------------------------------------
-# CARICAMENTO DATI
+# CARICAMENTO DATI (con auto-rilevamento separatore ',' o ';')
 # ----------------------------------------------------------------------------
-@st.cache_data
 @st.cache_data
 def carica_dati() -> pd.DataFrame:
     if not CSV_FILE.exists():
         raise FileNotFoundError(
             f"File '{CSV_FILE.name}' non trovato nella cartella dell'app."
         )
-    
-    # Legge le prime righe per capire se il separatore è ';' oppure ','
-    raw_text = None
+
+    raw_text = ""
+    used_enc = "utf-8-sig"
     for enc in ("utf-8-sig", "latin-1"):
         try:
             raw_text = CSV_FILE.read_text(encoding=enc)
@@ -273,14 +318,15 @@ def costruisci_orario(df: pd.DataFrame) -> dict:
     return orario
 
 
+def is_docente_buca_attiva(doc: str) -> bool:
+    doc_upper = doc.upper()
+    return any(cognome in doc_upper for cognome in DOCENTI_BUCHE_ATTIVE)
+
+
 # ----------------------------------------------------------------------------
 # MOTORE DELLE SOSTITUZIONI
 # ----------------------------------------------------------------------------
 def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dict]:
-    """
-    Ritorna (DataFrame_risultati, dict_ore_buche_interne).
-    dict_ore_buche_interne: {ora: [(docente, classe_prima, classe_dopo), ...]}
-    """
     g = giorno
 
     def cella(doc, h):
@@ -300,6 +346,20 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
 
     def presente_prima(doc, h):
         return any(cella(doc, x)[0] != "vuoto" for x in range(1, h))
+
+    def buca_valida_speciale(doc, h) -> bool:
+        """
+        Per Scavo e Innocenti: se all'ora h hanno cella 'vuoto', possono supplire
+        se prima O dopo nell'arco della giornata hanno almeno una classe nel PLESSO
+        (e non sono adiacenti a classi esterne).
+        """
+        if not is_docente_buca_attiva(doc):
+            return False
+        if not valida(doc, h):
+            return False
+        ha_plesso_prima = any(interna(doc, x) for x in range(1, h))
+        ha_plesso_dopo = any(interna(doc, x) for x in range(h + 1, 8))
+        return ha_plesso_prima or ha_plesso_dopo
 
     # Mappa orario giornaliero delle classi del plesso
     classi_ore = {}
@@ -342,33 +402,47 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
     da_C = []
 
     def candidati(t, cls):
+        """
+        Priorità risorse:
+        0: Disp. valida nel plesso
+        1: Ora buca nel plesso per Scavo / Innocenti
+        2: Ricev. valido nel plesso
+        Sottopriorità: 0 = stessa classe, 1 = ora adiacente nel plesso, 2 = altro
+        """
         out = []
         for doc in orario:
             if doc in assenze or (doc, t) in busy:
                 continue
             k, _ = cella(doc, t)
-            if k not in ("disp", "ricev") or not valida(doc, t):
+
+            tipo_risorsa = None
+            priorita_cat = 99
+
+            if k == "disp" and valida(doc, t):
+                tipo_risorsa = "Disp."
+                priorita_cat = 0
+            elif k == "vuoto" and buca_valida_speciale(doc, t):
+                tipo_risorsa = "Ora buca nel plesso"
+                priorita_cat = 1
+            elif k == "ricev" and valida(doc, t):
+                tipo_risorsa = "Ricev."
+                priorita_cat = 2
+            else:
                 continue
+
             stessa = cls in classi_docente[doc]
             adiac = interna(doc, t - 1) or interna(doc, t + 1)
             sub = 0 if stessa else (1 if adiac else 2)
-            if k == "disp":
-                etichetta = (
-                    f"Disp. (già docente in {cls})"
-                    if stessa
-                    else "Disp. (ora adiacente nel plesso)"
-                    if adiac
-                    else "Disp."
-                )
+
+            if stessa:
+                etichetta = f"{tipo_risorsa} (già docente in {cls})"
+            elif adiac:
+                etichetta = f"{tipo_risorsa} (ora adiacente nel plesso)"
             else:
-                etichetta = (
-                    f"Ricev. (già docente in {cls})"
-                    if stessa
-                    else "Ricev. (ora adiacente nel plesso)"
-                    if adiac
-                    else "Ricev."
-                )
-            out.append(((0 if k == "disp" else 1, sub, doc), doc, etichetta))
+                etichetta = tipo_risorsa
+
+            out.append(((priorita_cat, sub, doc), doc, etichetta))
+
         out.sort(key=lambda x: x[0])
         return [(d, e) for _, d, e in out]
 
@@ -467,7 +541,7 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
 
         da_C.extend((cls, h) for h in sorted(todo))
 
-    # ---- REGOLA C - Sostituzione con Disp./Ricev. validi nel plesso --------
+    # ---- REGOLA C - Sostituzione con risorse valide nel plesso -------------
     for cls, t in sorted(da_C, key=lambda x: (x[1], x[0])):
         cands = candidati(t, cls)
         if cands:
@@ -484,7 +558,7 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
             ris[(cls, t)] = (
                 "SCOPERTO",
                 "SCOPERTO - Nessun docente disponibile",
-                "Nessuna Disp./Ricev. valida nel plesso.",
+                "Nessuna risorsa valida disponibile nel plesso.",
                 "",
                 None,
             )
@@ -499,24 +573,23 @@ def calcola(orario: dict, giorno: str, assenze: dict) -> tuple[pd.DataFrame, dic
             None,
         )
 
-    # ---- Calcolo docenti con ORA BUCA ('vuoto') tra due classi del PLESSO ---
+    # ---- Docenti con ORA BUCA ('vuoto') tra due classi del PLESSO -----------
+    # (escludendo Scavo e Innocenti che sono già usati come risorse attive)
     ore_coinvolte = sorted({h for (_, h) in ris})
     buche_plesso = {}
     for h in ore_coinvolte:
         trovati_ora = []
         for doc in sorted(orario):
-            if doc in assenze or (doc, h) in busy:
+            if doc in assenze or (doc, h) in busy or is_docente_buca_attiva(doc):
                 continue
             k, _ = cella(doc, h)
             if k != "vuoto":
                 continue
-            # Cerca l'ultima attività prima di h e la prima attività dopo h
             prima = [cella(doc, x) for x in range(h - 1, 0, -1) if cella(doc, x)[0] != "vuoto"]
             dopo = [cella(doc, x) for x in range(h + 1, 8) if cella(doc, x)[0] != "vuoto"]
             if prima and dopo:
                 k_p, v_p = prima[0]
                 k_d, v_d = dopo[0]
-                # Entrambe adiacenti a classi del nostro plesso
                 if k_p == "classe" and v_p in PLESSO and k_d == "classe" and v_d in PLESSO:
                     trovati_ora.append((doc, v_p, v_d))
         if trovati_ora:
@@ -638,8 +711,17 @@ def main():
     st.set_page_config(
         page_title="Sostituzioni Plesso", page_icon="📋", layout="centered"
     )
-    applica_stile()
+
+    if "dark_mode" not in st.session_state:
+        st.session_state["dark_mode"] = False
+
+    applica_stile(st.session_state["dark_mode"])
     controlla_accesso()
+
+    # Barra superiore con toggle Chiaro / Scuro
+    col_titolo, col_tema = st.columns([3, 1])
+    with col_tema:
+        st.toggle("🌙 Scuro", key="dark_mode")
 
     st.markdown(
         """
@@ -711,7 +793,7 @@ def main():
     st.subheader("Prospetto da copiare")
     st.code(genera_bollettino(nome_giorno, df, assenti), language=None)
 
-    # Box informativo sui docenti che hanno un'ora buca tra due classi del plesso
+    # Box informativo sui docenti con ora buca nel plesso
     if buche_plesso:
         righe_buche = []
         for h, lista in buche_plesso.items():
