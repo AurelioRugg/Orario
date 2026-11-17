@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 SOSTITUZIONI DOCENTI - Plesso Vittorini
-Web app Streamlit con gestione separata Biennio/Triennio, classi assenti e alternative ora per ora.
+Web app Streamlit con eventi flessibili per classi/anni, tracciamento completo
+delle ore dei docenti assenti e priorità entrata/uscita.
 """
 
 import hmac
@@ -25,9 +26,6 @@ PLESSO = {
     "4A", "4B", "4LL", "4LM",
     "5A", "5M",
 }
-
-BIENNIO = {c for c in PLESSO if c.startswith(("1", "2"))}
-TRIENNIO = {c for c in PLESSO if c.startswith(("3", "4", "5"))}
 
 GIORNI = {
     "LUN": ("Lunedì", "Lun"),
@@ -346,7 +344,7 @@ def calcola(
     ore_escluse_classe: dict,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    ore_escluse_classe: {classe: set(ore in cui la classe non fa lezione per assemblea/assenza/gita)}
+    ore_escluse_classe: {classe: set(ore in cui la classe non fa lezione per assemblea/attività extra)}
     """
     g = giorno
 
@@ -388,13 +386,21 @@ def calcola(
         for doc in orario
     }
 
-    # Individua ore scoperte e compresenze (ignorando le ore in cui la classe è assente/in assemblea)
+    # Individua:
+    # 1. Ore da coprire (mancanti)
+    # 2. Compresenze
+    # 3. Ore in cui il docente assente aveva una classe del plesso impegnata in attività extra/assemblea
     mancanti = {}
     compres = {}
+    extra_att = {}  # (cls, h) -> [docenti_assenti]
+
     for doc, ore_ass in assenze.items():
         for h in ore_ass:
             k, cls = cella(doc, h)
-            if k != "classe" or cls not in PLESSO or is_classe_esclusa(cls, h):
+            if k != "classe" or cls not in PLESSO:
+                continue
+            if is_classe_esclusa(cls, h):
+                extra_att.setdefault((cls, h), []).append(doc)
                 continue
             altri = [
                 d
@@ -415,7 +421,7 @@ def calcola(
         Restituisce le risorse valide all'ora t:
         0: Disp. valida nel plesso
         1: Ora buca ('vuoto') per Scavo / Innocenti se non adiacente a classi fuori plesso
-        2: Classe in assemblea/assente (docente nel plesso libero da lezione)
+        2: Classe in assemblea/attività extra (docente nel plesso libero da lezione)
         3: Ricev. valido nel plesso
         """
         out = []
@@ -431,7 +437,7 @@ def calcola(
                 tipo_ris = "Buca valida"
                 cat = 1
             elif k == "classe" and v in PLESSO and is_classe_esclusa(v, t) and valida(doc, t):
-                tipo_ris = f"Libero (classe {v} assente/assemblea)"
+                tipo_ris = f"Libero ({v} in attività extra/assente)"
                 cat = 2
             elif k == "ricev" and valida(doc, t):
                 tipo_ris = "Ricev."
@@ -460,8 +466,8 @@ def calcola(
             if doc in assenze or (doc, t) in busy:
                 continue
             k, v = cella(doc, t)
-            libero_per_assemblea = (k == "classe" and v in PLESSO and is_classe_esclusa(v, t))
-            if k not in ("vuoto", "disp") and not libero_per_assemblea:
+            libero_per_extra = (k == "classe" and v in PLESSO and is_classe_esclusa(v, t))
+            if k not in ("vuoto", "disp") and not libero_per_extra:
                 continue
             if not valida(doc, t):
                 continue
@@ -470,7 +476,8 @@ def calcola(
             return doc
         return None
 
-    # ---- REGOLE A e B (continuità e max 1 ora ingresso/uscita) ------------
+    # ---- PRIORITÀ 1 e 2: ENTRATA POSTICIPATA / USCITA ANTICIPATA ------------
+    # (Sempre preferite rispetto a sostituzioni a 4ª, 5ª ora o ore intermedie)
     for cls in sorted(mancanti):
         hrs = sorted(classi_ore.get(cls, {}))
         todo = set(mancanti[cls])
@@ -484,7 +491,7 @@ def calcola(
             da_C.extend((cls, h) for h in sorted(todo))
             continue
 
-        # 1. Entrata posticipata: max 1 ora (prima ora effettiva della classe)
+        # 1. Regola A: Entrata posticipata diretta (prima ora effettiva della classe)
         prima_ora_classe = hrs[0]
         if prima_ora_classe in todo and len(hrs) > 1:
             ris[(cls, prima_ora_classe)] = ("ENTRATA_POST", "", None)
@@ -492,7 +499,7 @@ def calcola(
             hrs.remove(prima_ora_classe)
             ha_tagliato_ingresso = True
 
-        # 2. Uscita anticipata: max 1 ora (ultima ora effettiva della classe)
+        # 2. Regola A: Uscita anticipata diretta (ultima ora effettiva della classe)
         ultima_ora_classe = hrs[-1]
         if ultima_ora_classe in todo and len(hrs) > 1:
             ris[(cls, ultima_ora_classe)] = ("USCITA_ANT", "", None)
@@ -500,7 +507,8 @@ def calcola(
             hrs.remove(ultima_ora_classe)
             ha_tagliato_uscita = True
 
-        # 3. Anticipo/Posticipo ora per garantire continuità ed evitare buchi
+        # 3. Regola B: Anticipo dell'ultima ora (per uscita anticipata) o posticipo della prima
+        # (Preferito rispetto a mettere un sostituto a 4ª o 5ª ora!)
         for t in sorted(list(todo)):
             trovato = None
             if not ha_tagliato_uscita and len(hrs) > 1:
@@ -527,9 +535,11 @@ def calcola(
                 hrs.remove(src)
                 todo.remove(t)
 
+        # Solo le ore che non possono portare a uscita anticipata / entrata posticipata
+        # passano alla Regola C (sostituzione classica)
         da_C.extend((cls, h) for h in sorted(todo))
 
-    # ---- REGOLA C - Sostituzione con risorse valide nel plesso -------------
+    # ---- PRIORITÀ 3 (Regola C): Sostituzione con risorse valide ------------
     for cls, t in sorted(da_C, key=lambda x: (x[1], x[0])):
         cands = risorse_ora(t, cls)
         if cands:
@@ -543,11 +553,17 @@ def calcola(
     for (cls, h), altri in compres.items():
         ris[(cls, h)] = ("COMPRESENZA", ", ".join(altri), None)
 
-    # ---- Alternative disponibili ORA PER ORA --------------------------------
-    ore_coinvolte = sorted({h for (_, h) in ris})
+    # ---- Classi in attività extra / assemblea -------------------------------
+    for (cls, h), _ in extra_att.items():
+        ris[(cls, h)] = ("ATTIVITA_EXTRA", "", None)
+
+    # ---- Alternative disponibili ORA PER ORA (solo sulle ore con sostituzione)
+    ore_sostituzione = sorted(
+        {h for (_, h), (tipo, _, _) in ris.items() if tipo in ("SOSTITUTO", "SCOPERTO", "ANTICIPO", "POSTICIPO")}
+    )
     alternative_per_ora = {}
 
-    for h in ore_coinvolte:
+    for h in ore_sostituzione:
         valide_rimaste = risorse_ora(h)
 
         buche_interne = []
@@ -579,6 +595,8 @@ def calcola(
         assenti_per_riga[(cls, h)] = [
             d for d in assenze if h in assenze[d] and cella(d, h) == ("classe", cls)
         ]
+    for (cls, h), nomi in extra_att.items():
+        assenti_per_riga[(cls, h)] = nomi
 
     righe = []
     for (cls, h) in sorted(ris, key=lambda x: (x[1], x[0])):
@@ -598,7 +616,7 @@ def calcola(
 
 
 # ----------------------------------------------------------------------------
-# FORMATTAZIONE BOLLETTINO TASCABILE
+# FORMATTAZIONE BOLLETTINO TASCABILE (TUTTE LE ORE DEL DOCENTE ASSENTE)
 # ----------------------------------------------------------------------------
 def genera_bollettino(nome_giorno: str, df: pd.DataFrame, ordine_assenti: list) -> str:
     blocchi = [f"SOSTITUZIONI {nome_giorno.upper()}"]
@@ -632,6 +650,10 @@ def genera_bollettino(nome_giorno: str, df: pd.DataFrame, ordine_assenti: list) 
                 righe_testo.append(f"A {ora_txt} ora sostituisce {sost} in {cls}")
             elif tipo == "COMPRESENZA":
                 righe_testo.append(f"A {ora_txt} ora in {cls} resta {sost} (compresenza)")
+            elif tipo == "ATTIVITA_EXTRA":
+                righe_testo.append(
+                    f"A {ora_txt} ora {cls} in assemblea / attività extra (nessuna sostituzione)"
+                )
             else:
                 righe_testo.append(f"A {ora_txt} ora SCOPERTA in {cls}")
 
@@ -699,59 +721,68 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # 2. Sezione compatta per Assemblee e Classi Assenti (collassabile così non ingombra nei giorni normali)
+    # 2. Eventi, Assemblee e Classi Assenti (flessibile su qualsiasi gruppo di classi)
     ore_escluse_classe = {c: set() for c in PLESSO}
-    with st.expander("🏫 Assemblee o Classi assenti (opzionale)", expanded=False):
-        st.caption("Imposta eventuali ore senza lezione per gruppi di classi o singole classi in gita/uscita.")
-        col_b, col_t = st.columns(2)
-        with col_b:
-            ore_biennio = set(
-                st.multiselect(
-                    "Assemblea Biennio (1ª - 2ª)",
-                    ORE,
-                    format_func=lambda x: f"{x}ª ora",
-                    placeholder="Nessuna ora",
-                )
-            )
-        with col_t:
-            ore_triennio = set(
-                st.multiselect(
-                    "Assemblea Triennio (3ª - 4ª - 5ª)",
-                    ORE,
-                    format_func=lambda x: f"{x}ª ora",
-                    placeholder="Nessuna ora",
-                )
-            )
+    with st.expander("🏫 Eventi, Assemblee o Classi fuori aula (opzionale)", expanded=False):
+        st.caption(
+            "Seleziona un intero anno (es. tutte le Seconde, o Prime e Quinte) oppure singole classi impegnate in assemblee o uscite."
+        )
 
-        for c in BIENNIO:
-            ore_escluse_classe[c] |= ore_biennio
-        for c in TRIENNIO:
-            ore_escluse_classe[c] |= ore_triennio
+        # Selezione rapida per anno di corso
+        anni_disponibili = {
+            "Tutte le 1ª": {c for c in PLESSO if c.startswith("1")},
+            "Tutte le 2ª": {c for c in PLESSO if c.startswith("2")},
+            "Tutte le 3ª": {c for c in PLESSO if c.startswith("3")},
+            "Tutte le 4ª": {c for c in PLESSO if c.startswith("4")},
+            "Tutte le 5ª": {c for c in PLESSO if c.startswith("5")},
+        }
+
+        anni_scelti = st.multiselect(
+            "Interi anni coinvolti (es. 2ª, oppure 1ª e 5ª)",
+            list(anni_disponibili.keys()),
+            placeholder="Nessun anno intero selezionato",
+        )
+
+        if anni_scelti:
+            ore_anni = set(
+                st.multiselect(
+                    "Ore senza lezione per gli anni selezionati",
+                    ORE,
+                    format_func=lambda x: f"{x}ª ora",
+                    placeholder="Seleziona le ore (es. 2ª, 3ª)",
+                    key="ore_anni_evento",
+                )
+            )
+            for label_anno in anni_scelti:
+                for c in anni_disponibili[label_anno]:
+                    ore_escluse_classe[c] |= ore_anni
 
         st.markdown("---")
-        classi_assenti = st.multiselect(
-            "Singole classi assenti / fuori sede",
+        classi_singole = st.multiselect(
+            "Singole classi assenti / in uscita",
             sorted(PLESSO),
-            placeholder="Seleziona una o più classi...",
+            placeholder="Seleziona singole classi...",
         )
-        if classi_assenti:
+        if classi_singole:
             modo_cls = st.radio(
-                "Fascia oraria classi selezionate",
+                "Durata assenza classi singole",
                 ["Tutto il giorno", "Solo alcune ore"],
                 horizontal=True,
+                key="modo_cls_singole",
             )
             if modo_cls == "Tutto il giorno":
                 ore_cls = set(ORE)
             else:
                 ore_cls = set(
                     st.multiselect(
-                        "Ore di assenza per le classi selezionate",
+                        "Ore per le singole classi selezionate",
                         ORE,
                         format_func=lambda x: f"{x}ª ora",
                         placeholder="Scegli le ore",
+                        key="ore_cls_singole",
                     )
                 )
-            for c in classi_assenti:
+            for c in classi_singole:
                 ore_escluse_classe[c] |= ore_cls
 
     # 3. Selezione Docenti Assenti
@@ -795,7 +826,7 @@ def main():
 
     if df.empty:
         st.markdown(
-            '<div class="badge-ok">✅ Nessuna ora da coprire nelle classi del plesso.</div>',
+            '<div class="badge-ok">✅ Nessuna ora nel plesso prevista per i docenti selezionati.</div>',
             unsafe_allow_html=True,
         )
         return
@@ -807,35 +838,38 @@ def main():
             unsafe_allow_html=True,
         )
 
-    # 1. Prospetto pronto per WhatsApp
+    # 1. Prospetto completo pronto per WhatsApp
     st.subheader(f"Prospetto {nome_giorno}")
     st.code(genera_bollettino(nome_giorno, df, assenti), language=None)
 
     # 2. Alternative disponibili ora per ora
-    st.subheader("Alternative disponibili ora per ora")
-    st.caption("Risorse ancora libere in ciascuna ora interessata (utili per eventuali cambi manuali).")
-
-    for h, info in alternative_per_ora.items():
-        voci = []
-        if info["valide"]:
-            voci.append(f"<li><b>Risorse valide:</b> {', '.join(info['valide'])}</li>")
-        else:
-            voci.append("<li><b>Risorse valide:</b> Nessuna rimasta</li>")
-
-        if info["buche_plesso"]:
-            voci.append(
-                f"<li><b>Ore buche nel plesso (non a disp.):</b> {', '.join(info['buche_plesso'])}</li>"
-            )
-
-        st.markdown(
-            f"""
-            <div class="ora-card">
-                <h4>🕐 {h}ª ora ({ORDINALI_MIN[h]} ora)</h4>
-                <ul>{"".join(voci)}</ul>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    if alternative_per_ora:
+        st.subheader("Alternative disponibili ora per ora")
+        st.caption(
+            "Risorse ancora libere nelle ore in cui è stata assegnata una sostituzione."
         )
+
+        for h, info in alternative_per_ora.items():
+            voci = []
+            if info["valide"]:
+                voci.append(f"<li><b>Risorse valide:</b> {', '.join(info['valide'])}</li>")
+            else:
+                voci.append("<li><b>Risorse valide:</b> Nessuna rimasta</li>")
+
+            if info["buche_plesso"]:
+                voci.append(
+                    f"<li><b>Ore buche nel plesso (non a disp.):</b> {', '.join(info['buche_plesso'])}</li>"
+                )
+
+            st.markdown(
+                f"""
+                <div class="ora-card">
+                    <h4>🕐 {h}ª ora ({ORDINALI_MIN[h]} ora)</h4>
+                    <ul>{"".join(voci)}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 if __name__ == "__main__":
