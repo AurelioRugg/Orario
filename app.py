@@ -217,19 +217,34 @@ def controlla_accesso() -> None:
 # CARICAMENTO DATI
 # ----------------------------------------------------------------------------
 @st.cache_data
+@st.cache_data
 def carica_dati() -> pd.DataFrame:
     if not CSV_FILE.exists():
         raise FileNotFoundError(
             f"File '{CSV_FILE.name}' non trovato nella cartella dell'app."
         )
-    try:
-        df = pd.read_csv(
-            CSV_FILE, sep=";", dtype=str, keep_default_na=False, encoding="utf-8-sig"
-        )
-    except UnicodeDecodeError:
-        df = pd.read_csv(
-            CSV_FILE, sep=";", dtype=str, keep_default_na=False, encoding="latin-1"
-        )
+    
+    # Legge le prime righe per capire se il separatore è ';' oppure ','
+    raw_text = None
+    for enc in ("utf-8-sig", "latin-1"):
+        try:
+            raw_text = CSV_FILE.read_text(encoding=enc)
+            used_enc = enc
+            break
+        except UnicodeDecodeError:
+            continue
+
+    prima_riga = raw_text.splitlines()[0] if raw_text else ""
+    separatore = ";" if prima_riga.count(";") >= prima_riga.count(",") else ","
+
+    df = pd.read_csv(
+        CSV_FILE,
+        sep=separatore,
+        dtype=str,
+        keep_default_na=False,
+        encoding=used_enc,
+        on_bad_lines="skip",
+    )
     df.columns = df.columns.str.strip()
     return df
 
